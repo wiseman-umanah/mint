@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import Markdown, { type Components } from "react-markdown";
 import { api, useApi } from "@/lib/client";
 import type { MessageDTO, ProposalDTO } from "@/lib/types";
 import { ProposalCard } from "./proposal-card";
@@ -16,6 +17,59 @@ const SUGGESTIONS = [
   "Move 50 USDC into my trading vault",
   "Find a trade for my vault",
 ];
+
+const MESSAGE_COMPONENTS: Components = {
+  h1: ({ children }) => <h2 className="font-display text-lg font-bold tracking-tight text-ink">{children}</h2>,
+  h2: ({ children }) => <h2 className="font-display text-lg font-bold tracking-tight text-ink">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-[15px] font-semibold text-ink">{children}</h3>,
+  p: ({ children }) => <p className="leading-7 whitespace-pre-line text-ink">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc space-y-1.5 pl-5 marker:text-muted">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal space-y-1.5 pl-5 marker:text-muted">{children}</ol>,
+  li: ({ children }) => <li className="pl-1 leading-7 text-ink">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-ink">{children}</strong>,
+  em: ({ children }) => <em className="text-ink-2">{children}</em>,
+  a: ({ children, href }) => {
+    const external = href?.startsWith("http://") || href?.startsWith("https://");
+    return (
+      <a
+        href={href}
+        target={external ? "_blank" : undefined}
+        rel={external ? "noreferrer" : undefined}
+        className="break-words text-ink underline decoration-line-strong underline-offset-4 transition-colors hover:decoration-ink"
+      >
+        {children}
+      </a>
+    );
+  },
+  blockquote: ({ children }) => <blockquote className="border-l-2 border-line-strong pl-4 text-ink-2">{children}</blockquote>,
+  code: ({ children, className }) => (
+    <code className={cx("rounded bg-well px-1.5 py-0.5 font-mono text-[0.9em] text-ink", className)}>{children}</code>
+  ),
+  pre: ({ children }) => (
+    <pre className="overflow-x-auto rounded-control border border-line bg-well p-4 text-sm leading-6 [&>code]:bg-transparent [&>code]:p-0">
+      {children}
+    </pre>
+  ),
+  hr: () => <hr className="border-line" />,
+  table: ({ children }) => (
+    <div className="overflow-x-auto rounded-control border border-line">
+      <table className="w-full border-collapse text-left text-sm">{children}</table>
+    </div>
+  ),
+  tr: ({ children }) => <tr className="border-b border-line last:border-b-0">{children}</tr>,
+  th: ({ children }) => <th className="bg-well px-3 py-2 font-medium text-ink">{children}</th>,
+  td: ({ children }) => <td className="px-3 py-2 text-ink-2">{children}</td>,
+};
+
+function MessageContent({ content }: { content: string }) {
+  return (
+    <div className="min-w-0 space-y-3 break-words text-[15px] [&_li>p]:inline">
+      <Markdown components={MESSAGE_COMPONENTS} skipHtml>
+        {content}
+      </Markdown>
+    </div>
+  );
+}
 
 export function Assistant() {
   const history = useApi<History>("/api/chat");
@@ -125,7 +179,7 @@ export function Assistant() {
                 </p>
               ) : (
                 <div className="max-w-[640px] space-y-3">
-                  <p className="leading-relaxed whitespace-pre-wrap text-ink">{m.content}</p>
+                  <MessageContent content={m.content} />
                   {m.proposalIds.map((id) =>
                     proposals[id] ? (
                       <ProposalCard key={id} proposal={proposals[id]} onChange={(p) => setProposals([p])} />
