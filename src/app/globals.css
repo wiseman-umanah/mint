@@ -1,26 +1,208 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: custom (user named: black and white, HoverAi glass) · posture: restrained · signature: the guardrail-checked proposal card · nav: floating glass pill, docks on scroll · footer: none (app) · hero: settled (landing) · v2.0.0 */
+/* Hallmark · critique: P4 H4 E4 S4 R4 V4 — black and white; depth comes from HoverAi's glass edge light; the only hue is market green and red for price direction */
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  --color-paper: #0a0a0a;
+  --color-panel: #101010;
+  --color-surface: #141414;
+  --color-well: rgb(255 255 255 / 0.04);
+  --color-ink: #fafafa;
+  --color-ink-2: #c4c4c4;
+  --color-muted: #8c8c8c;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.18);
+  --color-accent: #fafafa;
+  --color-accent-hover: #d6d6d6;
+  --color-accent-soft: rgb(255 255 255 / 0.1);
+  --color-accent-ink: #ffffff;
+  --color-on-accent: #0a0a0a;
+  --color-danger: #ffffff;
+  --color-danger-soft: rgb(255 255 255 / 0.07);
+  --color-warn: #e0e0e0;
+  --color-warn-soft: rgb(255 255 255 / 0.05);
+  --color-focus: #ffffff;
+  --color-scrim: rgb(0 0 0 / 0.7);
+
+  /* The one exception to black and white: market direction, in the green and red traders read at a glance. */
+  --color-up: #16c784;
+  --color-down: #ea3943;
+  --color-up-soft: rgb(22 199 132 / 0.16);
+  --color-down-soft: rgb(234 57 67 / 0.16);
+
+  --chart-up: #16c784;
+  --chart-down: #ea3943;
+  --chart-down-edge: #ea3943;
+  --chart-grid: rgb(255 255 255 / 0.05);
+  --chart-volume-up: rgb(22 199 132 / 0.35);
+  --chart-volume-down: rgb(234 57 67 / 0.35);
+
+  /* Glass, after HoverAi: a top sheen, an edge lit from the top-left, a dark tinted fill. */
+  --glass-float:
+    linear-gradient(180deg, rgb(255 255 255 / 0.08) 0%, rgb(255 255 255 / 0.01) 100%) padding-box,
+    linear-gradient(135deg, rgb(255 255 255 / 0.3) 0%, rgb(255 255 255 / 0.08) 30%, rgb(255 255 255 / 0.02) 65%, rgb(255 255 255 / 0.01) 100%) border-box,
+    rgb(12 12 12 / 0.55) padding-box;
+  --glass-card:
+    linear-gradient(180deg, rgb(255 255 255 / 0.05) 0%, rgb(255 255 255 / 0.01) 100%) padding-box,
+    linear-gradient(135deg, rgb(255 255 255 / 0.18) 0%, rgb(255 255 255 / 0.06) 30%, rgb(255 255 255 / 0.015) 70%, rgb(255 255 255 / 0.005) 100%) border-box,
+    rgb(255 255 255 / 0.02) padding-box;
+  --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35), 0 0 0 0.5px rgb(255 255 255 / 0.1);
+  --glow: radial-gradient(ellipse 60% 45% at 50% 0%, rgb(255 255 255 / 0.09) 0%, transparent 70%);
+
+  --font-body: var(--font-creato), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-machina), var(--font-creato), ui-sans-serif, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --radius-card: 18px;
+  --radius-control: 12px;
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --shadow-pop: var(--glass-shadow);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-paper: var(--color-paper);
+  --color-panel: var(--color-panel);
+  --color-surface: var(--color-surface);
+  --color-well: var(--color-well);
+  --color-ink: var(--color-ink);
+  --color-ink-2: var(--color-ink-2);
+  --color-muted: var(--color-muted);
+  --color-line: var(--color-line);
+  --color-line-strong: var(--color-line-strong);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-accent-ink: var(--color-accent-ink);
+  --color-on-accent: var(--color-on-accent);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
+  --color-warn: var(--color-warn);
+  --color-warn-soft: var(--color-warn-soft);
+  --color-scrim: var(--color-scrim);
+  --color-up: var(--color-up);
+  --color-down: var(--color-down);
+  --color-up-soft: var(--color-up-soft);
+  --color-down-soft: var(--color-down-soft);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+  --shadow-pop: var(--shadow-pop);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  html,
+  body {
+    overflow-x: clip;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+    background: var(--glow) no-repeat, var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    overflow-wrap: break-word;
+    min-width: 0;
+    text-wrap: balance;
+  }
+
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    transition: none;
+  }
+
+  ::selection {
+    background: var(--color-ink);
+    color: var(--color-paper);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* Floating layers (header, menus, composer): real transparency over the page. */
+  .glass {
+    background: var(--glass-float);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: blur(20px) saturate(160%) brightness(1.08);
+    backdrop-filter: blur(20px) saturate(160%) brightness(1.08);
+    box-shadow: var(--glass-shadow);
+  }
+
+  /* Cards sit on the page: the glass edge and sheen without the blur. */
+  .glass-card {
+    background: var(--glass-card);
+    border: 1px solid transparent;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes mint-pulse {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.skeleton {
+  background: var(--color-line);
+  border-radius: 8px;
+  animation: mint-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes mint-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.enter {
+  animation: mint-enter var(--dur-short) ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .enter {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

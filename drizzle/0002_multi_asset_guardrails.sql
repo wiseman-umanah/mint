@@ -1,0 +1,2 @@
+ALTER TABLE "guardrails" ADD COLUMN "allowed_assets" jsonb DEFAULT '["XLM","BTC","ETH","EURC","AQUA","yXLM","CETES","USTRY"]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "guardrails" ADD COLUMN "max_asset_pct" numeric DEFAULT 50 NOT NULL;

@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MINT — Market Intelligence & Network Transfers
 
-## Getting Started
+AI-guarded payments and trading on Stellar. Email login, a platform-created wallet, Circle testnet
+USDC, and an AI that proposes trades a deterministic guardrail engine must approve before anything
+is signed. Market analysis reads **real mainnet** XLM/USDC prices; every transaction settles on
+**testnet** and links to StellarChain.
 
-First, run the development server:
+## How it fits together
+
+| Piece | Where | What it does |
+|---|---|---|
+| Web app | `src/app`, `src/components` | Next.js 16 (Cache Components on), Tailwind 4, black and white with HoverAi-style glass. Routes: `/assistant`, `/wallet/send` `/wallet/swap` `/wallet/receive`, `/trading`, `/vault`, `/agent`, `/guardrails`, `/activity` |
+| Terminal | `src/components/terminal.tsx`, `chart.tsx` | TradingView Lightweight Charts (mainnet price or testnet fills, 5m to 1d), DEX order book, limit and market orders, open orders |
+| Accounts | `src/lib/stellar/accounts.ts` | Two accounts per user: **main wallet** and **trading vault**. Reserves sponsored by the treasury (CAP-33); secrets AES-256-GCM encrypted at rest |
+| Fees | `src/lib/stellar/submit.ts` | Every user transaction is fee-bumped by the treasury — users never hold XLM for gas |
+| Markets | `src/lib/assets.ts`, `src/lib/stellar/market.ts` | XLM, BTC, ETH, EURC, AQUA, yXLM, CETES, USTRY against USDC. Analysis reads the real mainnet markets; trades settle on testnet, where every asset but XLM and USDC is a MINT-issued copy |
+| Trading | `src/lib/stellar/trade.ts` | Any-to-any path-payment swaps (slippage enforced on-chain via `destMin`), SDEX limit orders on every pair, cancels, cross-currency payments. Missing trustlines open in the same transaction, sponsored by the treasury |
+| Research | `src/lib/indicators.ts`, `src/lib/research.ts` | SMA, RSI, ATR, volatility, support and resistance; order-book liquidity checks; issuer due diligence from mainnet and the issuer's stellar.toml |
+| Guardrails | `src/lib/guardrails.ts` | Capital cap, daily loss limit (rolling 24h, net of deposits), max trade size, max slippage, allowed assets, max per asset, agent scope, kill switch. Re-checked right before signing |
+| Strategy | `src/lib/strategy.ts` | Deterministic ideas: testnet-vs-mainnet mispricing and trend-aware rebalancing. The LLM explains; it never invents trades |
+| AI | `src/lib/ai` | Groq tool calling. Every money-moving tool only *stages* a proposal |
+| Handles | `src/app/federation`, `.well-known/stellar.toml` | SEP-2 federation: anyone on Stellar can pay `alex*your-domain` |
+| Worker | `src/lib/worker.ts` | Market maker quoting all eight pairs around the mainnet price (the issuer keeps it stocked with copies) + autonomous agent loop |
+
+The Hard Capital Cap is structural: the agent can only sign for the vault, and the vault can only pay
+out to its owner's main wallet. Loosening any guardrail or enabling autonomous mode needs a second
+code sent to the user's email.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+cp .env.example .env.local
+pnpm secrets                 # paste WALLET_ENCRYPTION_KEY and SESSION_SECRET into .env.local
+pnpm stellar:bootstrap       # testnet treasury, market maker and asset issuer, secrets saved to .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then put your Groq key in `GROQ_API_KEY`. Without `RESEND_API_KEY`, email codes print in the server console.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Local mode (default) — no external database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Leave `DATABASE_URL` empty. MINT runs **PGlite**, a real Postgres compiled to WASM, inside the Next
+process, stored in `.data/pglite`. Migrations from `drizzle/` apply on startup.
 
-## Learn More
+```bash
+pnpm dev                     # app + local database + market maker + agent, one process
+pnpm db:reset                # wipe the local database (stop pnpm dev first)
+pnpm db:studio               # browse it (stop pnpm dev first)
+```
 
-To learn more about Next.js, take a look at the following resources:
+The embedded database can only be opened by one process, so in local mode the market maker and
+agent run inside `pnpm dev` (set `MINT_EMBEDDED_WORKER=false` to turn them off) and `pnpm worker`
+refuses to start.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Neon mode
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Set `DATABASE_URL` to your Neon pooled connection string, then:
 
-## Deploy on Vercel
+```bash
+pnpm db:migrate              # apply drizzle/ migrations to Neon
+pnpm dev                     # the app
+pnpm worker                  # market maker + agent (or --mm / --agent)
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Schema changes: edit `src/lib/db/schema.ts`, run `pnpm db:generate`, commit the new file in `drizzle/`.
+Both modes run the same migrations.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Checks: `pnpm typecheck`, `pnpm lint`, `pnpm build`.
+
+## Notes
+
+- Testnet resets periodically — re-run `pnpm stellar:bootstrap` afterwards. Existing users keep their
+  keys; the portfolio endpoint re-creates their accounts on-chain on next load.
+- Wallets are custodial in this build. The production path is passkey smart wallets (Soroban) for the
+  main wallet with a co-signed classic vault — see the PRD review notes.
