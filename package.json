@@ -23,6 +23,8 @@
     "@electric-sql/pglite": "^0.5.15",
     "@neondatabase/serverless": "^1.2.0",
     "@stellar/stellar-sdk": "^17.4.0",
+    "@x402/core": "2.31.0",
+    "@x402/stellar": "2.31.0",
     "drizzle-orm": "^0.45.4",
     "groq-sdk": "^1.6.0",
     "lightweight-charts": "5.2.1",

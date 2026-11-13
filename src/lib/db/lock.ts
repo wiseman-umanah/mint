@@ -3,7 +3,8 @@ import path from "node:path";
 
 // PGlite has no cross-process lock: two processes on one data folder silently overwrite each
 // other's writes and can leave it unreadable. This pid file is that lock.
-export const LOCAL_DB_DIR = path.join(process.cwd(), ".data", "pglite");
+// MINT_DATA_DIR moves it, for example onto a Docker volume.
+export const LOCAL_DB_DIR = path.join(process.env.MINT_DATA_DIR || path.join(process.cwd(), ".data"), "pglite");
 const LOCK = `${LOCAL_DB_DIR}.lock`;
 
 function holder(): number | null {

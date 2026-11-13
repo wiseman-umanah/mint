@@ -63,26 +63,28 @@ async function buyUsdc(keypair: Keypair, wantUsdc: number) {
   const missing = wantUsdc - USDC;
   if (missing <= 1) return console.log(`• ${keypair.publicKey().slice(0, 6)}… already holds ${USDC.toFixed(2)} USDC`);
 
-  // Ask the network how much XLM it costs to receive the missing USDC.
-  const { records } = await horizon().strictReceivePaths([XLM], usdc(), amount7(missing)).call();
-  const best = records.sort((a, b) => Number(a.source_amount) - Number(b.source_amount))[0];
-  if (!best) return console.warn("! no XLM→USDC liquidity on testnet right now — use https://faucet.circle.com instead");
-  const cost = Number(best.source_amount);
-  if (cost > spendableXLM - XLM_FLOOR) {
-    return console.warn(`! buying ${missing.toFixed(0)} USDC would cost ${cost.toFixed(0)} XLM — not enough XLM; re-run later or use faucet.circle.com`);
+  // Ask the network what the missing USDC costs in XLM. If the full amount is out of reach, a
+  // thin testnet book or too little XLM, settle for a smaller share rather than none.
+  for (const share of [1, 0.5, 0.25, 0.1]) {
+    const want = missing * share;
+    const { records } = await horizon().strictReceivePaths([XLM], usdc(), amount7(want)).call();
+    const best = records.sort((a, b) => Number(a.source_amount) - Number(b.source_amount))[0];
+    const cost = best ? Number(best.source_amount) : Infinity;
+    if (cost > spendableXLM - XLM_FLOOR) continue;
+    const tx = await build(keypair.publicKey(), [
+      Operation.pathPaymentStrictReceive({
+        sendAsset: XLM,
+        sendMax: amount7(cost * 1.02),
+        destination: keypair.publicKey(),
+        destAsset: usdc(),
+        destAmount: amount7(want),
+        path: [],
+      }),
+    ]);
+    await submitSigned(tx, [keypair]);
+    return console.log(`• bought ${want.toFixed(2)} USDC for ~${cost.toFixed(0)} XLM${share < 1 ? ` (wanted ${missing.toFixed(0)}; the testnet book is thin)` : ""}`);
   }
-  const tx = await build(keypair.publicKey(), [
-    Operation.pathPaymentStrictReceive({
-      sendAsset: XLM,
-      sendMax: amount7(cost * 1.02),
-      destination: keypair.publicKey(),
-      destAsset: usdc(),
-      destAmount: amount7(missing),
-      path: [],
-    }),
-  ]);
-  await submitSigned(tx, [keypair]);
-  console.log(`• bought ${missing.toFixed(2)} USDC for ~${cost.toFixed(0)} XLM`);
+  console.warn(`! couldn't buy USDC for ${keypair.publicKey().slice(0, 6)}… on the testnet DEX right now. Send it testnet USDC from https://faucet.circle.com, or re-run later.`);
 }
 
 // The issuer's own account can't hold its assets, so only the maker needs trustlines to the copies.

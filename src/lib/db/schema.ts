@@ -48,7 +48,8 @@ export const sessions = pgTable("sessions", {
   createdAt: createdAt(),
 });
 
-export type WalletKind = "main" | "vault";
+// "agent" is the agent's own budget wallet: the only key that ever signs a data payment.
+export type WalletKind = "main" | "vault" | "agent";
 
 export const wallets = pgTable(
   "wallets",
@@ -86,6 +87,13 @@ export const guardrails = pgTable("guardrails", {
   maxAssetPct: numeric("max_asset_pct", { mode: "number" }).notNull().default(50),
   halted: boolean("halted").notNull().default(false),
   haltedReason: text("halted_reason"),
+  // Paying for data over x402. Off until the user gives the agent a budget wallet.
+  dataEnabled: boolean("data_enabled").notNull().default(false),
+  // The most USDC the agent's budget wallet may ever hold.
+  agentBudgetUsd: numeric("agent_budget_usd", { mode: "number" }).notNull().default(2),
+  // The most the agent may spend on data in 24 hours, and on a single request.
+  dataDailyUsd: numeric("data_daily_usd", { mode: "number" }).notNull().default(0.5),
+  dataMaxCallUsd: numeric("data_max_call_usd", { mode: "number" }).notNull().default(0.05),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -166,4 +174,106 @@ export const messages = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("message_user_idx").on(t.userId, t.createdAt)],
+);
+
+export type PositionStrategy = "trend" | "dip" | "manual";
+export type PositionPlan = { strategy: PositionStrategy; stopPrice: number; targetPrice: number; atrPct: number };
+
+// What the vault holds of each asset and how the agent is managing it: cost basis, stop and target.
+export const positions = pgTable(
+  "positions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    asset: text("asset").notNull(),
+    status: text("status").$type<"open" | "closed">().notNull().default("open"),
+    strategy: text("strategy").$type<PositionStrategy>().notNull(),
+    qty: numeric("qty", { mode: "number" }).notNull(),
+    // USDC paid for `qty`, so entry price = costUsd / qty.
+    costUsd: numeric("cost_usd", { mode: "number" }).notNull(),
+    stopPrice: numeric("stop_price", { mode: "number" }).notNull(),
+    targetPrice: numeric("target_price", { mode: "number" }).notNull(),
+    // Highest price seen since entry; the trailing stop follows it.
+    highPrice: numeric("high_price", { mode: "number" }).notNull(),
+    atrPct: numeric("atr_pct", { mode: "number" }).notNull(),
+    // Running total over partial and final exits.
+    realizedPnlUsd: numeric("realized_pnl_usd", { mode: "number" }).notNull().default(0),
+    exitReason: text("exit_reason"),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [index("position_user_idx").on(t.userId, t.status)],
+);
+
+export type DecisionAction = "buy" | "sell" | "suggest" | "watch" | "hold" | "blocked" | "failed" | "halt" | "info";
+
+// The agent's journal: one row each time what it does or thinks about an asset changes.
+export const agentDecisions = pgTable(
+  "agent_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Null for decisions about the whole vault.
+    asset: text("asset"),
+    action: text("action").$type<DecisionAction>().notNull(),
+    summary: text("summary").notNull(),
+    // The numbers behind the decision, shown on request.
+    detail: jsonb("detail").$type<Record<string, unknown>>(),
+    proposalId: uuid("proposal_id"),
+    txHash: text("tx_hash"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("decision_user_idx").on(t.userId, t.createdAt)],
+);
+
+export type AssetRead = {
+  asset: string;
+  price: number;
+  regime: "trend" | "range" | "risk_off" | "no_data";
+  rsi: number | null;
+  atrPct: number | null;
+  change24hPct: number;
+  // 0 to 1: how strongly the entry rules favour buying now.
+  score: number;
+  // What the agent is doing or waiting for on this asset, in words.
+  note: string;
+};
+
+// Live status of each user's agent, rewritten every check.
+export const agentState = pgTable("agent_state", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tickCount: integer("tick_count").notNull().default(0),
+  lastTickAt: timestamp("last_tick_at", { withTimezone: true }),
+  headline: text("headline").notNull().default(""),
+  reads: jsonb("reads").$type<AssetRead[]>().notNull().default([]),
+  // Per asset, the journal key last written, so an unchanged view isn't logged again.
+  lastKeys: jsonb("last_keys").$type<Record<string, string>>().notNull().default({}),
+});
+
+// Every time the agent tried to pay for data over x402: settled, refused by a guardrail, or failed.
+export const agentPayments = pgTable(
+  "agent_payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    payTo: text("pay_to"),
+    amountUsd: numeric("amount_usd", { mode: "number" }).notNull(),
+    status: text("status").$type<"paid" | "blocked" | "failed">().notNull(),
+    // Which guardrail refused it, or what went wrong.
+    reason: text("reason"),
+    txHash: text("tx_hash"),
+    // What was bought, kept so the agent and the user can read it.
+    data: jsonb("data").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agent_payment_user_idx").on(t.userId, t.createdAt)],
 );

@@ -1,0 +1,34 @@
+# One command:  docker compose up
+#
+# Then open http://localhost:3000 and sign in with any email (no email is sent; the code fills
+# itself in). A fresh install creates its own secrets and Stellar testnet accounts on first start
+# and keeps them, with the database, in the mint-data volume.
+#
+# Optional settings go in a .env.local file next to this one (same names as .env.example):
+#   GROQ_API_KEY=...        turns on the chat assistant (free key: https://console.groq.com)
+#   TREASURY_SECRET=... etc. reuse testnet accounts you already bootstrapped
+services:
+  mint:
+    build: .
+    image: mint:latest
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    ports:
+      - "${MINT_PORT:-3000}:3000"
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      # The container keeps its own database in the volume. Set MINT_DATABASE_URL to use Postgres
+      # (Neon) instead; the worker then runs as a second process in the same container.
+      DATABASE_URL: ${MINT_DATABASE_URL:-}
+      # Sign-in codes are typed in for you unless a RESEND_API_KEY is set.
+      SIMULATE_EMAIL: "true"
+      APP_URL: http://localhost:3000
+      MINT_PORT: ${MINT_PORT:-3000}
+    volumes:
+      - mint-data:/data
+
+volumes:
+  mint-data:

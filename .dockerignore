@@ -1,0 +1,11 @@
+.git
+node_modules
+.next
+.data
+.env*
+!.env.example
+contracts/target
+*.tsbuildinfo
+next-env.d.ts
+Dockerfile
+docker-compose.yml

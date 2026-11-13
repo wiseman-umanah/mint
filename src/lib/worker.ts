@@ -1,30 +1,23 @@
 /**
  * MINT background loops:
  *   market maker  mirrors every real (mainnet) market onto the testnet order books
- *   agent         snapshots vaults, enforces the daily loss limit, and trades for autonomous users
+ *   agent         checks every vault each minute: values it, enforces the loss limit, manages positions
  *   oracle        publishes mainnet reference prices to MINT's on-chain price feed (if deployed)
  *
  * Runs standalone via `pnpm worker`, or inside the Next server when using the local database.
  */
-import { and, desc, eq, gte } from "drizzle-orm";
 import { Keypair, Operation, type xdr } from "@stellar/stellar-sdk";
 import type { BaseAsset } from "./assets";
-import { db, schema } from "./db";
+import { runAgent, TICK_MS } from "./agent/run";
+import { db } from "./db";
 import { env } from "./env";
-import { haltTrading } from "./guardrails";
-import { getPortfolio, lastSnapshot, recordSnapshot } from "./portfolio";
-import { createProposal, executeProposal, quoteSwapProposal } from "./proposals";
 import { cancelOfferOps, hasTrustline, openOffers, readBalances } from "./stellar/accounts";
 import { amount7, assetFor, codeOf, horizon, issuerKeypair, usdc } from "./stellar/config";
 import { publishPrices } from "./stellar/contracts";
 import { allMarkets, referencePrices } from "./stellar/market";
 import { build, submitSigned } from "./stellar/submit";
-import { generateIdeas } from "./strategy";
 
 const MM_INTERVAL_MS = 25_000;
-const AGENT_INTERVAL_MS = 60_000;
-const SNAPSHOT_EVERY_MS = 5 * 60_000;
-const AGENT_COOLDOWN_MS = 5 * 60_000;
 // Matches the price feed's 300s resolution; guardrail vaults refuse prices older than their limit.
 const ORACLE_INTERVAL_MS = 5 * 60_000;
 
@@ -161,53 +154,14 @@ async function marketMakerTick(maker: Keypair) {
 }
 
 async function agentTick() {
+  // Every user with a vault gets a check: valuation and the loss limit in any mode, trades when autonomous.
   const users = await db().query.guardrails.findMany();
-  const markets = await allMarkets();
   for (const g of users) {
     try {
-      const portfolio = await getPortfolio(g.userId);
-      if (!portfolio.vault.active) continue;
-
-      const last = await lastSnapshot(g.userId);
-      if (portfolio.vault.valueUsd > 0 && (!last || Date.now() - last.takenAt.getTime() > SNAPSHOT_EVERY_MS)) {
-        await recordSnapshot(g.userId, portfolio.vault.valueUsd);
+      const run = await runAgent(g.userId);
+      for (const j of run?.journal ?? []) {
+        if (j.action !== "watch" && j.action !== "hold") log("agent", `${g.userId.slice(0, 8)} ${j.action}: ${j.summary}${j.txHash ? ` (${j.txHash.slice(0, 10)}…)` : ""}`);
       }
-
-      // Daily loss limit applies in every mode: breach → halt and pull orders.
-      if (!g.halted && portfolio.loss.lossPct >= g.dailyLossPct) {
-        await haltTrading(g.userId, `daily loss limit of ${g.dailyLossPct}% reached (${portfolio.loss.lossPct.toFixed(2)}%)`);
-        log("agent", `halted ${g.userId.slice(0, 8)} — loss ${portfolio.loss.lossPct.toFixed(2)}%`);
-        continue;
-      }
-      if (g.mode !== "autonomous" || g.halted) continue;
-
-      const recent = await db().query.proposals.findFirst({
-        where: and(
-          eq(schema.proposals.userId, g.userId),
-          eq(schema.proposals.source, "agent"),
-          gte(schema.proposals.createdAt, new Date(Date.now() - AGENT_COOLDOWN_MS)),
-        ),
-        orderBy: desc(schema.proposals.createdAt),
-      });
-      if (recent) continue;
-
-      const idea = generateIdeas(markets, portfolio)[0];
-      if (!idea) continue;
-      const params =
-        idea.kind === "swap" && "from" in idea.params
-          ? await quoteSwapProposal(g.userId, "vault", idea.params.from, idea.params.to, idea.params.amount)
-          : idea.params;
-      const proposal = await createProposal(
-        g.userId,
-        { kind: idea.kind, source: "agent", title: idea.title, params, rationale: idea.rationale, risk: idea.risk },
-        portfolio,
-      );
-      if (proposal.status !== "pending") {
-        log("agent", `${g.userId.slice(0, 8)} idea blocked by guardrails: ${idea.title}`);
-        continue;
-      }
-      const result = await executeProposal(g.userId, proposal.id);
-      log("agent", `${g.userId.slice(0, 8)} ${result?.status}: ${idea.title}${result?.txHash ? ` (${result.txHash.slice(0, 10)}…)` : ""}`);
     } catch (error) {
       log("agent", `${g.userId.slice(0, 8)} error: ${error instanceof Error ? error.message : error}`);
     }
@@ -248,7 +202,7 @@ export function startWorker({ marketMaker = true, agent = true, oracle = true } 
   }
   if (agent) {
     log("agent", "autonomous agent started");
-    every(AGENT_INTERVAL_MS, "agent", agentTick);
+    every(TICK_MS, "agent", agentTick);
   }
   if (oracle && env.priceFeedContractId) {
     log("oracle", `price feed ${env.priceFeedContractId}`);

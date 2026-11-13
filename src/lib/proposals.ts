@@ -1,10 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { amountDigits, type BaseAsset } from "./assets";
 import { db, schema } from "./db";
-import type { ProposalKind } from "./db/schema";
+import { applyBuy, applySell } from "./agent/positions";
+import type { PositionPlan, ProposalKind } from "./db/schema";
 import { evaluate, type GuardedAction, haltTrading } from "./guardrails";
 import { getPortfolio, type Portfolio, recordSnapshot } from "./portfolio";
-import { cancelAllOffers, walletKeypair, getWallet } from "./stellar/accounts";
+import { balancesOf, cancelAllOffers, walletKeypair, getWallet } from "./stellar/accounts";
 import type { AssetCode } from "./stellar/config";
 import { executeSwap, placeLimitOrder, quoteSwap, sendPayment, type SwapQuote } from "./stellar/trade";
 
@@ -17,7 +18,15 @@ export type PaymentParams = {
   deliverAsset?: AssetCode;
   memo?: string;
 };
-export type SwapParams = { wallet: "main" | "vault"; quote: SwapQuote; slippageBps: number };
+export type SwapParams = {
+  wallet: "main" | "vault";
+  quote: SwapQuote;
+  slippageBps: number;
+  // Set by the agent: how it will manage what it buys, why it is selling, and what it traded.
+  plan?: PositionPlan;
+  exit?: { reason: string };
+  agent?: { asset: BaseAsset; side: "buy" | "sell" };
+};
 export type LimitOrderParams = { side: "buy" | "sell"; base: BaseAsset; amount: number; price: number };
 
 // Orders staged before multi-asset support stored XLM amounts as amountXlm.
@@ -85,6 +94,9 @@ function toAction(draft: Pick<Draft, "kind" | "source" | "params">, portfolio: P
   }
 }
 
+/** The guardrail verdict on a draft, without saving anything. */
+export const judge = (draft: Pick<Draft, "kind" | "source" | "params">, portfolio: Portfolio) => evaluate(toAction(draft, portfolio), portfolio);
+
 export async function createProposal(userId: string, draft: Draft, portfolio?: Portfolio) {
   portfolio ??= await getPortfolio(userId);
   const action = toAction(draft, portfolio);
@@ -146,6 +158,7 @@ export async function executeProposal(userId: string, proposalId: string) {
 
   try {
     const { hash, summary, vaultFlowUsd } = await perform(userId, claimed.kind, claimed.params, portfolio);
+    if (claimed.kind === "swap") await bookVaultSwap(userId, claimed.params as unknown as SwapParams, portfolio).catch((error) => console.error("[mint] booking a vault swap failed", error));
     if (claimed.kind === "fund_vault" && portfolio.vault.valueUsd === 0) {
       // First funding: an empty-vault snapshot is the baseline the daily loss limit measures from.
       await recordSnapshot(userId, 0);
@@ -161,6 +174,29 @@ export async function executeProposal(userId: string, proposalId: string) {
     return finish({ status: "executed", guardrail: verdict, txHash: hash });
   } catch (error) {
     return finish({ status: "failed", guardrail: verdict, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/**
+ * Books a vault swap into the position ledger at what it actually cost: the change in the vault's
+ * balances across the trade, not the quote.
+ */
+async function bookVaultSwap(userId: string, x: SwapParams, before: Portfolio) {
+  if (x.wallet !== "vault") return;
+  const after = await balancesOf(before.vault.publicKey);
+  if (!after) return;
+  const { sendAsset, destAsset } = x.quote;
+  const spent = before.vault.balances[sendAsset] - after[sendAsset];
+  const got = after[destAsset] - before.vault.balances[destAsset];
+  if (spent <= 0 || got <= 0) return;
+  const reason = x.exit?.reason ?? "Sold by you";
+  if (sendAsset === "USDC" && destAsset !== "USDC") return applyBuy(userId, destAsset, got, spent, x.plan);
+  if (destAsset === "USDC" && sendAsset !== "USDC") return applySell(userId, sendAsset, spent, got, reason);
+  if (sendAsset !== "USDC" && destAsset !== "USDC") {
+    // Asset to asset: one position shrinks and another grows, both valued at the mainnet price.
+    const value = usd(sendAsset, spent, before.prices);
+    await applySell(userId, sendAsset, spent, value, reason);
+    await applyBuy(userId, destAsset, got, value, x.plan);
   }
 }
 
