@@ -1,3 +1,6 @@
+<img width="1300" height="655" alt="image" src="https://github.com/user-attachments/assets/90c979cd-6e1c-4d6f-b530-b51ac1a56dfa" />
+
+
 # MINT — Market Intelligence & Network Transfers
 
 AI-guarded payments and trading on Stellar. Email login, a platform-created wallet, Circle testnet
