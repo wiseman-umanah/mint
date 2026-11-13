@@ -17,6 +17,10 @@ const body = z
     mode: z.enum(["copilot", "autonomous"]),
     allowedAssets: z.array(z.enum(BASE_ASSETS)).transform((list) => [...new Set(list)]),
     maxAssetPct: z.number().min(5).max(100),
+    // The agent's data budget (x402); optional so older clients keep working.
+    agentBudgetUsd: z.number().min(0.1).max(50).optional(),
+    dataDailyUsd: z.number().min(0.01).max(20).optional(),
+    dataMaxCallUsd: z.number().min(0.01).max(5).optional(),
     code: z.string().regex(/^\d{6}$/).optional(),
   })
   .refine((v) => v.maxTradeUsd <= v.capitalCapUsd, { message: "Max trade size can't exceed the capital cap" });
@@ -34,6 +38,9 @@ export const PUT = authed(async (user, request) => {
     next.maxTradeUsd > current.maxTradeUsd ||
     next.maxSlippageBps > current.maxSlippageBps ||
     next.maxAssetPct > current.maxAssetPct ||
+    (next.agentBudgetUsd ?? 0) > current.agentBudgetUsd ||
+    (next.dataDailyUsd ?? 0) > current.dataDailyUsd ||
+    (next.dataMaxCallUsd ?? 0) > current.dataMaxCallUsd ||
     next.allowedAssets.some((a) => !current.allowedAssets.includes(a)) ||
     (next.mode === "autonomous" && current.mode !== "autonomous");
 

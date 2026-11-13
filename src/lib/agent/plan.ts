@@ -16,6 +16,8 @@ export type PlanInput = {
   equityUsd: number;
   usdc: number;
   guardrails: { maxTradeUsd: number; maxAssetPct: number; capitalCapUsd: number; allowedAssets: string[] };
+  // Scales new positions down, with the reason, when the data the agent bought says to be careful.
+  sizing?: { factor: number; note: string };
   now?: number;
 };
 
@@ -28,7 +30,7 @@ const px = (n: number) => n.toFixed(priceDigits(n));
  * new entry, tighter stops for winners, and a note per asset saying what the agent is doing or
  * waiting for. Nothing here signs anything; every trade it returns still has to pass the guardrails.
  */
-export function planTick({ reads, positions, closed, equityUsd, usdc, guardrails: g, now = Date.now() }: PlanInput) {
+export function planTick({ reads, positions, closed, equityUsd, usdc, guardrails: g, sizing, now = Date.now() }: PlanInput) {
   const exits: Exit[] = [];
   const trails: { id: string; highPrice: number; stopPrice: number }[] = [];
   const notes: Note[] = [];
@@ -141,10 +143,10 @@ export function planTick({ reads, positions, closed, equityUsd, usdc, guardrails
     }
 
     // Size so that hitting the stop costs about 1% of the vault, then apply every cap.
-    const byRisk = (equityUsd * RULES.riskPerTradePct) / read.stopPct;
+    const byRisk = ((equityUsd * RULES.riskPerTradePct) / read.stopPct) * (sizing?.factor ?? 1);
     const caps: [string, number][] = [
       ["risk per trade", byRisk],
-      [`${RULES.maxPositionPct}% of the vault per position`, (equityUsd * RULES.maxPositionPct) / 100],
+      [`${RULES.maxPositionPct}% of the vault per position`, ((equityUsd * RULES.maxPositionPct) / 100) * (sizing?.factor ?? 1)],
       ["your max trade size", g.maxTradeUsd],
       [`${RULES.maxExposurePct}% total exposure`, (equityUsd * RULES.maxExposurePct) / 100 - exposure],
       ["your max per asset", (g.maxAssetPct / 100) * g.capitalCapUsd],
@@ -162,7 +164,7 @@ export function planTick({ reads, positions, closed, equityUsd, usdc, guardrails
       usd,
       plan: { strategy: read.entry, stopPrice, targetPrice, atrPct: read.atrPct ?? read.stopPct / RULES.stopAtr },
       summary: `Buy ${asset} with ${usd.toFixed(2)} USDC (${read.entry === "trend" ? "trend" : "dip"} entry)`,
-      rationale: `${read.note} Stop ${px(stopPrice)} (−${read.stopPct.toFixed(1)}%), target ${px(targetPrice)} (+${(read.stopPct * RULES.rewardToRisk).toFixed(1)}%). Sized by ${limitedBy}.`,
+      rationale: `${read.note} Stop ${px(stopPrice)} (−${read.stopPct.toFixed(1)}%), target ${px(targetPrice)} (+${(read.stopPct * RULES.rewardToRisk).toFixed(1)}%). Sized by ${limitedBy}.${sizing && sizing.factor < 1 ? ` ${sizing.note}` : ""}`,
       risk: read.stopPct > 5 ? "high" : read.stopPct > 2.5 ? "medium" : "low",
     };
   }

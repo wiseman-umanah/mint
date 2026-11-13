@@ -94,6 +94,9 @@ function toAction(draft: Pick<Draft, "kind" | "source" | "params">, portfolio: P
   }
 }
 
+/** The guardrail verdict on a draft, without saving anything. */
+export const judge = (draft: Pick<Draft, "kind" | "source" | "params">, portfolio: Portfolio) => evaluate(toAction(draft, portfolio), portfolio);
+
 export async function createProposal(userId: string, draft: Draft, portfolio?: Portfolio) {
   portfolio ??= await getPortfolio(userId);
   const action = toAction(draft, portfolio);

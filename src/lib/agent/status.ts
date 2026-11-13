@@ -2,11 +2,23 @@ import { and, asc, desc, eq, gte } from "drizzle-orm";
 import { db, schema } from "../db";
 import { getGuardrails } from "../portfolio";
 import { referencePrices } from "../stellar/market";
+import { agentBalance, allowedSellers, recentPayments, spentOnData } from "./data";
 import { closedPositions, openPositions } from "./positions";
 import { TICK_MS } from "./run";
 import { RULES } from "./signals";
 
 const DAY_MS = 86_400_000;
+// The agent wallet's balance comes from Horizon; remember it briefly so polling stays cheap.
+const BALANCE_TTL_MS = 20_000;
+const balances = new Map<string, { at: number; value: Awaited<ReturnType<typeof agentBalance>> }>();
+async function cachedAgentBalance(userId: string) {
+  const hit = balances.get(userId);
+  if (hit && Date.now() - hit.at < BALANCE_TTL_MS) return hit.value;
+  const value = await agentBalance(userId).catch(() => hit?.value ?? { wallet: null, usdc: 0 });
+  balances.set(userId, { at: Date.now(), value });
+  return value;
+}
+export const forgetAgentBalance = (userId: string) => balances.delete(userId);
 const MAX_CURVE_POINTS = 240;
 
 /**
@@ -14,7 +26,7 @@ const MAX_CURVE_POINTS = 240;
  * poll it every few seconds without touching Horizon.
  */
 export async function agentStatus(userId: string) {
-  const [state, guardrails, open, closed, decisions, snapshots, prices] = await Promise.all([
+  const [state, guardrails, open, closed, decisions, snapshots, prices, wallet, payments, spent24hUsd] = await Promise.all([
     db().query.agentState.findFirst({ where: eq(schema.agentState.userId, userId) }),
     getGuardrails(userId),
     openPositions(userId),
@@ -25,6 +37,9 @@ export async function agentStatus(userId: string) {
       orderBy: asc(schema.vaultSnapshots.takenAt),
     }),
     referencePrices(),
+    cachedAgentBalance(userId),
+    recentPayments(userId),
+    spentOnData(userId),
   ]);
 
   const positions = open.map((p) => {
@@ -73,6 +88,18 @@ export async function agentStatus(userId: string) {
       winRatePct: closed.length ? (wins / closed.length) * 100 : null,
     },
     rules: RULES,
+    // The agent's own budget wallet and what it has paid for over x402.
+    data: {
+      enabled: guardrails.dataEnabled,
+      wallet: wallet.wallet?.publicKey ?? null,
+      balanceUsd: wallet.usdc,
+      spent24hUsd,
+      budgetUsd: guardrails.agentBudgetUsd,
+      dailyUsd: guardrails.dataDailyUsd,
+      maxCallUsd: guardrails.dataMaxCallUsd,
+      sellers: allowedSellers(),
+      payments: payments.map((p) => ({ id: p.id, url: p.url, amountUsd: p.amountUsd, status: p.status, reason: p.reason, txHash: p.txHash, createdAt: p.createdAt })),
+    },
   };
 }
 

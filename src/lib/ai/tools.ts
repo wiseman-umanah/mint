@@ -314,6 +314,14 @@ export async function runTool(userId: string, name: string, rawArgs: string): Pr
             closed_trades: a.stats.closedTrades,
             win_rate_pct: a.stats.winRatePct === null ? null : round(a.stats.winRatePct, 0),
             markets: a.reads.map((r) => ({ asset: r.asset, regime: r.regime, rsi: r.rsi === null ? null : round(r.rsi, 0), view: r.note })),
+            data_budget: {
+              enabled: a.data.enabled,
+              agent_wallet_usd: round(a.data.balanceUsd, 2),
+              spent_24h_usd: round(a.data.spent24hUsd, 2),
+              daily_limit_usd: a.data.dailyUsd,
+              max_per_request_usd: a.data.maxCallUsd,
+              recent_payments: a.data.payments.slice(0, 5).map((p) => ({ at: p.createdAt, status: p.status, amount_usd: p.amountUsd, seller: p.url, reason: p.reason })),
+            },
             recent_decisions: a.decisions.slice(0, 12).map((d) => ({ at: d.createdAt, action: d.action, summary: d.summary })),
           },
         };

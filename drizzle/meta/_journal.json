@@ -29,6 +29,13 @@
       "when": 1794565902367,
       "tag": "0003_agent_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794567154872,
+      "tag": "0004_agent_data_budget",
+      "breakpoints": true
     }
   ]
 }

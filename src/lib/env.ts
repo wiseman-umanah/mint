@@ -69,6 +69,22 @@ export const env = {
   get soroswapRouterId() {
     return process.env.SOROSWAP_ROUTER_ID || "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD";
   },
+  /** Where this app is reachable; the agent buys MINT's own paid feed from here by default. */
+  get appUrl() {
+    return process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`);
+  },
+  /**
+   * x402 facilitator that verifies and settles payments. Any facilitator speaking x402 v2 on
+   * Stellar works (x402.org, OpenZeppelin, Vellar's on mainnet). "local" settles in-process.
+   */
+  get x402FacilitatorUrl() {
+    const url = process.env.X402_FACILITATOR_URL || "https://x402.org/facilitator";
+    return url === "local" ? null : url;
+  },
+  /** Paid endpoints the agent may buy from, comma-separated. Defaults to MINT's own market feed. */
+  get x402DataSources() {
+    return (process.env.X402_DATA_SOURCES || `${this.appUrl}/api/x402/signals`).split(",").map((s) => s.trim()).filter(Boolean);
+  },
   get federationDomain() {
     return process.env.FEDERATION_DOMAIN || "localhost:3000";
   },

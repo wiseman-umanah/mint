@@ -48,7 +48,8 @@ export const sessions = pgTable("sessions", {
   createdAt: createdAt(),
 });
 
-export type WalletKind = "main" | "vault";
+// "agent" is the agent's own budget wallet: the only key that ever signs a data payment.
+export type WalletKind = "main" | "vault" | "agent";
 
 export const wallets = pgTable(
   "wallets",
@@ -86,6 +87,13 @@ export const guardrails = pgTable("guardrails", {
   maxAssetPct: numeric("max_asset_pct", { mode: "number" }).notNull().default(50),
   halted: boolean("halted").notNull().default(false),
   haltedReason: text("halted_reason"),
+  // Paying for data over x402. Off until the user gives the agent a budget wallet.
+  dataEnabled: boolean("data_enabled").notNull().default(false),
+  // The most USDC the agent's budget wallet may ever hold.
+  agentBudgetUsd: numeric("agent_budget_usd", { mode: "number" }).notNull().default(2),
+  // The most the agent may spend on data in 24 hours, and on a single request.
+  dataDailyUsd: numeric("data_daily_usd", { mode: "number" }).notNull().default(0.5),
+  dataMaxCallUsd: numeric("data_max_call_usd", { mode: "number" }).notNull().default(0.05),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -247,3 +255,25 @@ export const agentState = pgTable("agent_state", {
   // Per asset, the journal key last written, so an unchanged view isn't logged again.
   lastKeys: jsonb("last_keys").$type<Record<string, string>>().notNull().default({}),
 });
+
+// Every time the agent tried to pay for data over x402: settled, refused by a guardrail, or failed.
+export const agentPayments = pgTable(
+  "agent_payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    payTo: text("pay_to"),
+    amountUsd: numeric("amount_usd", { mode: "number" }).notNull(),
+    status: text("status").$type<"paid" | "blocked" | "failed">().notNull(),
+    // Which guardrail refused it, or what went wrong.
+    reason: text("reason"),
+    txHash: text("tx_hash"),
+    // What was bought, kept so the agent and the user can read it.
+    data: jsonb("data").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agent_payment_user_idx").on(t.userId, t.createdAt)],
+);

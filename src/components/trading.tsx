@@ -156,6 +156,9 @@ function GuardrailForm({ p, onSaved }: { p: PortfolioDTO; onSaved: () => void })
     maxTradeUsd: String(g.maxTradeUsd),
     maxSlippagePct: String(g.maxSlippageBps / 100),
     maxAssetPct: String(g.maxAssetPct),
+    agentBudgetUsd: String(g.agentBudgetUsd),
+    dataDailyUsd: String(g.dataDailyUsd),
+    dataMaxCallUsd: String(g.dataMaxCallUsd),
     mode: g.mode,
   });
   const [allowed, setAllowed] = useState<string[]>(g.allowedAssets);
@@ -179,6 +182,9 @@ function GuardrailForm({ p, onSaved }: { p: PortfolioDTO; onSaved: () => void })
           maxTradeUsd: Number(values.maxTradeUsd),
           maxSlippageBps: Math.round(Number(values.maxSlippagePct) * 100),
           maxAssetPct: Number(values.maxAssetPct),
+          agentBudgetUsd: Number(values.agentBudgetUsd),
+          dataDailyUsd: Number(values.dataDailyUsd),
+          dataMaxCallUsd: Number(values.dataMaxCallUsd),
           allowedAssets: allowed,
           mode: values.mode,
           code: needsCode ? code : undefined,
@@ -252,6 +258,15 @@ function GuardrailForm({ p, onSaved }: { p: PortfolioDTO; onSaved: () => void })
               ))}
             </div>
             <p className="mt-1.5 text-sm text-muted">USDC is always allowed. Adding an asset needs the email code.</p>
+          </fieldset>
+          <fieldset className="space-y-4 border-t border-line pt-4">
+            <legend className="float-left mb-1 w-full text-sm text-ink-2">Agent data budget (x402)</legend>
+            <p className="clear-both text-sm text-muted">What the agent may spend buying market data on its own. It pays from a separate wallet that holds only this budget.</p>
+            <Field label="Agent wallet holds at most (USD)" inputMode="decimal" value={values.agentBudgetUsd} onChange={set("agentBudgetUsd")} hint="The most you can lose if the agent's key is stolen." />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Per day (USD)" inputMode="decimal" value={values.dataDailyUsd} onChange={set("dataDailyUsd")} />
+              <Field label="Per request (USD)" inputMode="decimal" value={values.dataMaxCallUsd} onChange={set("dataMaxCallUsd")} />
+            </div>
           </fieldset>
           {needsCode && (
             <Field

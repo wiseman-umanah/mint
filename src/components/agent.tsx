@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ASSETS, type AssetCode, pairSlug, type BaseAsset } from "@/lib/assets";
-import { api, num, price, signed, timeAgo, txUrl, usd, useApi } from "@/lib/client";
+import { accountUrl, api, num, price, short, signed, timeAgo, txUrl, usd, useApi, useSimulatedAutofill } from "@/lib/client";
 import type { AgentStatusDTO, PortfolioDTO, ProposalDTO } from "@/lib/types";
 import { useProposal } from "./forms";
 import { ProposalCard } from "./proposal-card";
-import { Badge, Button, Card, CardHeader, cx, ErrorState, Skeleton } from "./ui";
+import { Badge, Button, Card, CardHeader, cx, ErrorState, Field, Meter, Skeleton } from "./ui";
 
 type Decision = AgentStatusDTO["decisions"][number];
 type OpenPosition = AgentStatusDTO["positions"][number];
@@ -100,6 +100,8 @@ export function AgentPage() {
                   </div>
                 </Card>
               )}
+              <DrillCard onDone={refreshStatus} />
+              <WalletCard a={a} onDone={() => { refreshStatus(); portfolio.refresh(); }} />
               <MarketsCard a={a} />
               <FindTrade onSettled={() => { refreshStatus(); refreshPending(); }} />
             </div>
@@ -521,4 +523,202 @@ function FindTrade({ onSettled }: { onSettled: () => void }) {
       </div>
     </Card>
   );
+}
+
+type Drill = { attack: string; attempt: string; held: boolean; stoppedBy: string; detail: string; proof: "live" | "design" };
+
+function DrillCard({ onDone }: { onDone: () => void }) {
+  const [results, setResults] = useState<Drill[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResults((await api<{ results: Drill[] }>("/api/agent/drill", { method: "POST" })).results);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The drill couldn't run");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const held = results?.filter((r) => r.held).length ?? 0;
+  return (
+    <Card>
+      <CardHeader
+        title="What if the agent is hijacked?"
+        hint="Run the drill: MINT plays a compromised agent against your real guardrails. Nothing is signed or sent."
+        action={
+          <Button size="sm" variant="secondary" icon="ri-shield-keyhole-line" loading={busy} onClick={run}>
+            {results ? "Run again" : "Run the drill"}
+          </Button>
+        }
+      />
+      <div className="px-5 pt-3 pb-5">
+        {error && <ErrorState message={error} onRetry={run} />}
+        {!results && !error && (
+          <p className="text-sm text-muted">Six attacks: stealing the vault, an oversized trade, paying a fake API, orders hidden in data, reusing the agent&apos;s key, and loosening its own limits.</p>
+        )}
+        {results && (
+          <>
+            <p className="flex items-center gap-2 text-[15px] text-ink" role="status">
+              <i className={held === results.length ? "ri-shield-check-fill" : "ri-error-warning-fill"} aria-hidden />
+              {held} of {results.length} attacks stopped.
+            </p>
+            <ol className="mt-3 divide-y divide-line rounded-control border border-line">
+              {results.map((r) => (
+                <li key={r.attack} className="px-3.5 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <i className={cx("text-[17px] text-ink", r.held ? "ri-checkbox-circle-fill" : "ri-close-circle-line")} aria-label={r.held ? "Stopped" : "Not stopped"} />
+                    <h3 className="text-[15px] font-medium text-ink">{r.attack}</h3>
+                    <Badge tone={r.held ? "neutral" : "danger"}>{r.held ? `Stopped by: ${r.stoppedBy}` : "Got through"}</Badge>
+                    {r.proof === "design" && <Badge>By design</Badge>}
+                  </div>
+                  <p className="mt-1.5 text-sm text-muted">Tried: {r.attempt}.</p>
+                  <p className="mt-0.5 text-sm leading-relaxed text-ink-2">{r.detail}</p>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function WalletCard({ a, onDone }: { a: AgentStatusDTO; onDone: () => void }) {
+  const d = a.data;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [needsCode, setNeedsCode] = useState(false);
+  const [simulated, setSimulated] = useState(false);
+  const { autofill, typing, cancel } = useSimulatedAutofill();
+
+  const act = async (action: "enable" | "topup" | "revoke") => {
+    setBusy(action);
+    setError(null);
+    try {
+      const result = await api<{ needsConfirmation?: boolean; devCode?: string }>("/api/agent/wallet", { body: { action, code: action === "enable" && needsCode ? code : undefined } });
+      if (result.needsConfirmation) {
+        setNeedsCode(true);
+        setSimulated(Boolean(result.devCode));
+        if (result.devCode) autofill(result.devCode, setCode);
+        return;
+      }
+      setNeedsCode(false);
+      setCode("");
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That didn't work");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Agent wallet and data budget"
+        hint="The agent pays for market data per request over x402, from its own small wallet. That key can't touch your vault or main wallet."
+        action={d.enabled ? <Badge tone="accent">On</Badge> : <Badge>Off</Badge>}
+      />
+      <div className="space-y-4 px-5 pt-3 pb-5">
+        {!d.enabled ? (
+          <>
+            <p className="text-sm leading-relaxed text-ink-2">
+              Give the agent up to {usd(d.budgetUsd)} from your main wallet. It may spend {usd(d.dailyUsd)} a day, {usd(d.maxCallUsd)} a request, and only at sellers on its list. You can
+              take it all back at any time.
+            </p>
+            {needsCode && (
+              <Field
+                label="Code from your email"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={code}
+                onChange={(e) => {
+                  cancel();
+                  setCode(e.target.value.replace(/\D/g, ""));
+                }}
+                hint={typing ? "Filling in the code…" : simulated ? "Development mode: no email is sent, so the code was filled in for you." : "We sent a 6-digit code to confirm giving the agent a budget."}
+              />
+            )}
+            <Button size="sm" icon="ri-wallet-3-line" loading={busy === "enable" || typing} disabled={needsCode && code.length !== 6} onClick={() => act("enable")}>
+              {needsCode ? "Confirm and fund the agent" : "Give the agent a data budget"}
+            </Button>
+          </>
+        ) : (
+          <>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+              <div>
+                <dt className="text-muted">In the agent wallet</dt>
+                <dd className="tabular mt-0.5 text-[20px] font-bold tracking-tight text-ink">{usd(d.balanceUsd)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted">Max per request</dt>
+                <dd className="tabular mt-0.5 text-ink">{usd(d.maxCallUsd)}</dd>
+              </div>
+              <div className="max-sm:col-span-2">
+                <dt className="text-muted">May buy from</dt>
+                <dd className="mt-0.5 break-all text-ink">{d.sellers.join(", ")}</dd>
+              </div>
+            </dl>
+            <Meter label="Spent on data in the last 24h" value={d.spent24hUsd} max={d.dailyUsd} detail={`${usd(d.spent24hUsd)} of ${usd(d.dailyUsd)}`} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" icon="ri-add-line" loading={busy === "topup"} disabled={busy !== null} onClick={() => act("topup")}>
+                Top up to {usd(d.budgetUsd)}
+              </Button>
+              <Button size="sm" variant="danger" icon="ri-forbid-line" loading={busy === "revoke"} disabled={busy !== null} onClick={() => act("revoke")}>
+                Revoke and take the money back
+              </Button>
+              {d.wallet && (
+                <a href={accountUrl(d.wallet)} target="_blank" rel="noreferrer" className="ml-auto rounded text-sm text-ink underline-offset-4 hover:underline">
+                  {short(d.wallet)} on StellarChain
+                </a>
+              )}
+            </div>
+          </>
+        )}
+        {error && (
+          <p role="alert" className="flex gap-1.5 text-sm text-ink">
+            <i className="ri-error-warning-line" aria-hidden />
+            {error}
+          </p>
+        )}
+        {d.payments.length > 0 && (
+          <div>
+            <h3 className="text-sm text-muted">Data payments</h3>
+            <ul className="mt-1.5 divide-y divide-line text-sm">
+              {d.payments.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2">
+                  <i className={cx("translate-y-0.5 text-ink", p.status === "paid" ? "ri-checkbox-circle-fill" : p.status === "blocked" ? "ri-shield-cross-line" : "ri-error-warning-line")} aria-hidden />
+                  <span className="text-ink">
+                    {p.status === "paid" ? "Paid" : p.status === "blocked" ? "Blocked" : "Failed"} <span className="tabular">{usd(p.amountUsd)}</span>
+                  </span>
+                  <span className="min-w-0 truncate text-muted">{hostOf(p.url)}</span>
+                  <span className="ml-auto text-xs text-muted">{timeAgo(p.createdAt)}</span>
+                  {p.txHash && (
+                    <a href={txUrl(p.txHash)} target="_blank" rel="noreferrer" className="rounded text-xs text-ink underline-offset-4 hover:underline">
+                      Transaction
+                    </a>
+                  )}
+                  {p.reason && p.status !== "paid" && <p className="w-full pl-7 text-xs leading-relaxed text-muted">{p.reason}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }

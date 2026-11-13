@@ -1,12 +1,14 @@
 import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { amountDigits, type BaseAsset } from "../assets";
 import { db, schema } from "../db";
+import { env } from "../env";
 import type { AssetRead, DecisionAction, PositionPlan } from "../db/schema";
 import { haltTrading } from "../guardrails";
 import { getPortfolio, lastSnapshot, recordSnapshot } from "../portfolio";
 import { createProposal, executeProposal, type SwapParams } from "../proposals";
 import { allMarkets, chartCandles } from "../stellar/market";
 import { quoteSwap } from "../stellar/trade";
+import { buyData, latestPaidData, recentPayments } from "./data";
 import { planTick } from "./plan";
 import { closedPositions, openPositions, syncPositions } from "./positions";
 import { type Read, readMarket } from "./signals";
@@ -16,6 +18,8 @@ export const TICK_MS = 60_000;
 const SNAPSHOT_EVERY_MS = { autonomous: 60_000, copilot: 5 * 60_000 };
 // A trade that was blocked, failed or declined isn't retried for this long.
 const RETRY_AFTER_MS = 15 * 60_000;
+// A change of view on a market that is only being watched is logged at most this often.
+const WATCH_QUIET_MS = 20 * 60_000;
 // A vault smaller than this has nothing worth trading.
 const MIN_VAULT_USD = 5;
 // Skip a buy when the testnet book is this much worse than the mainnet price.
@@ -28,6 +32,40 @@ export async function marketReads(): Promise<Read[]> {
     markets.map(async (market) => readMarket(market, await chartCandles(market.base, "mainnet", "1h", 200).catch(() => []))),
   );
   return reads;
+}
+
+// How often the agent buys the market feed, and how long it waits after an attempt that didn't settle.
+const DATA_EVERY_MS = 30 * 60_000;
+const DATA_RETRY_MS = 10 * 60_000;
+// Below this share of markets in an uptrend, new positions are opened at half size.
+const WEAK_BREADTH = 0.25;
+
+/** The paid market feed's breadth reading, turned into a position-size factor. */
+export async function sizingFromPaidData(userId: string) {
+  const paid = await latestPaidData(userId);
+  const breadth = (paid?.data as { breadth?: { uptrend_share?: number; uptrends?: number; markets?: number } } | undefined)?.breadth;
+  if (!breadth || typeof breadth.uptrend_share !== "number" || breadth.uptrend_share >= WEAK_BREADTH) return undefined;
+  return { factor: 0.5, note: `Half size: the market feed the agent bought shows only ${breadth.uptrends} of ${breadth.markets} markets in an uptrend.` };
+}
+
+/** Buys the market feed over x402 when it is due. Never throws: a failed purchase must not stop trading. */
+async function buyMarketData(userId: string, g: { dataEnabled: boolean; halted: boolean } & Parameters<typeof buyData>[2], journal: Journal[]) {
+  if (!g.dataEnabled || g.halted) return;
+  try {
+    const [last] = await recentPayments(userId, 1);
+    const age = last ? Date.now() - last.createdAt.getTime() : Infinity;
+    if (age < (last?.status === "paid" ? DATA_EVERY_MS : DATA_RETRY_MS)) return;
+    const url = env.x402DataSources[0];
+    const payment = await buyData(userId, url, g);
+    const seller = new URL(url).host;
+    if (payment.status === "paid") {
+      journal.push({ asset: null, action: "info", summary: `Paid ${payment.amountUsd.toFixed(2)} USDC from the agent wallet for market data from ${seller} (x402).`, txHash: payment.txHash });
+    } else {
+      journal.push({ asset: null, action: payment.status, summary: `Data payment to ${seller} ${payment.status === "blocked" ? "blocked by guardrails" : "failed"}. ${payment.reason ?? ""}` });
+    }
+  } catch (error) {
+    console.error("[mint] buying market data failed", error);
+  }
 }
 
 type Journal = { asset: string | null; action: DecisionAction; summary: string; detail?: Record<string, unknown>; proposalId?: string; txHash?: string | null };
@@ -91,7 +129,8 @@ export async function runAgent(userId: string, { minGapMs = TICK_MS - 10_000 } =
   const prices = Object.fromEntries(reads.map((r) => [r.asset, r.price]));
   const positions = await syncPositions(userId, vault.balances, prices);
   const closed = await closedPositions(userId, 10);
-  const plan = planTick({ reads, positions, closed, equityUsd: vault.valueUsd, usdc: vault.balances.USDC, guardrails: g, now: now.getTime() });
+  const sizing = await sizingFromPaidData(userId);
+  const plan = planTick({ reads, positions, closed, equityUsd: vault.valueUsd, usdc: vault.balances.USDC, guardrails: g, sizing, now: now.getTime() });
   for (const t of plan.trails) {
     await db().update(schema.positions).set({ highPrice: t.highPrice, stopPrice: t.stopPrice }).where(eq(schema.positions.id, t.id));
   }
@@ -101,8 +140,13 @@ export async function runAgent(userId: string, { minGapMs = TICK_MS - 10_000 } =
     reads.map((r) => ({ asset: r.asset, price: r.price, regime: r.regime, rsi: r.rsi, atrPct: r.atrPct, change24hPct: r.change24hPct, score: r.score, note: noteFor.get(r.asset)?.summary ?? r.note }));
   const logNotes = () => {
     for (const note of plan.notes) {
-      if (lastKeys[note.asset] === note.key) continue;
+      const before = lastKeys[note.asset];
+      if (before === note.key) continue;
+      // A market sitting on the edge of two readings would otherwise fill the journal with flip-flops.
+      const loggedAt = Number(lastKeys[`${note.asset}@`] ?? 0);
+      if (note.action === "watch" && before?.startsWith("watch:") && now.getTime() - loggedAt < WATCH_QUIET_MS) continue;
       lastKeys[note.asset] = note.key;
+      lastKeys[`${note.asset}@`] = String(now.getTime());
       journal.push({ asset: note.asset, action: note.action, summary: note.action === "watch" ? `${note.asset}: ${note.summary}` : note.summary, detail: numbers(reads.find((r) => r.asset === note.asset)) });
     }
   };
@@ -172,6 +216,7 @@ export async function runAgent(userId: string, { minGapMs = TICK_MS - 10_000 } =
     await trade({ asset: e.asset, side: "buy", amount: e.usd, title: e.summary, rationale: e.rationale, risk: e.risk, plan: e.plan });
   }
   logNotes();
+  await buyMarketData(userId, g, journal);
 
   // Read the ledger again so the headline counts what this check just bought or sold.
   const held = await openPositions(userId);
