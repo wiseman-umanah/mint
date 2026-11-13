@@ -6,3 +6,6 @@ export const POST = authed(async (user) => {
   const run = await runAgent(user.id, { minGapMs: 15_000 });
   return { ran: Boolean(run), headline: run?.headline ?? null };
 });
+
+// Stellar settlement can take several seconds; allow for it on serverless hosts.
+export const maxDuration = 60;

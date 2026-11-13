@@ -34,3 +34,6 @@ export const POST = authed(async (user, request) => {
   await db().update(schema.guardrails).set({ dataEnabled: true, updatedAt: new Date() }).where(eq(schema.guardrails.userId, user.id));
   return funded;
 });
+
+// Stellar settlement can take several seconds; allow for it on serverless hosts.
+export const maxDuration = 60;

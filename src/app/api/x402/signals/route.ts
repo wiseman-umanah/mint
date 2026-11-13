@@ -37,3 +37,6 @@ export const GET = paywalled({ priceUsd, description }, async () => {
     })),
   };
 });
+
+// Stellar settlement can take several seconds; allow for it on serverless hosts.
+export const maxDuration = 60;

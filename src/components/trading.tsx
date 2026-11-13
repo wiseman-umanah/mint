@@ -39,6 +39,17 @@ export function VaultPage() {
       <PageHead title="Trading vault" body="The only money MINT can trade. Fund it from your wallet; it pays out only back to you." aside={<ModeBadge p={p} />} />
       {portfolio.error && <ErrorState message={portfolio.error} onRetry={portfolio.refresh} />}
       <VaultCard p={p} onSettled={portfolio.refresh} />
+      <Link
+        href="/agent"
+        className="glass-card flex items-center gap-3 rounded-card px-5 py-4 text-[15px] text-ink transition-colors duration-[var(--dur-micro)] hover:bg-well"
+      >
+        <i className="ri-robot-2-line text-xl" aria-hidden />
+        <span className="min-w-0 flex-1">
+          See what the agent is doing with this money
+          <span className="block text-sm text-muted">Open positions, profit and loss, and every decision with its reason.</span>
+        </span>
+        <i className="ri-arrow-right-line" aria-hidden />
+      </Link>
       <Card>
         <CardHeader title="Risk" hint="Measured live against mainnet prices." action={<Link href="/guardrails" className="rounded text-sm text-ink underline-offset-4 hover:underline">Adjust</Link>} />
         <div className="px-5 pt-4 pb-5">{p ? <GuardrailMeters p={p} /> : <Skeleton className="h-20" />}</div>
