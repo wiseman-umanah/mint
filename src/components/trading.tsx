@@ -4,12 +4,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { ASSETS, type AssetCode, BASE_ASSETS } from "@/lib/assets";
 import { accountUrl, api, num, usd, useApi, useSimulatedAutofill } from "@/lib/client";
-import type { PortfolioDTO, ProposalDTO } from "@/lib/types";
+import type { PortfolioDTO } from "@/lib/types";
 import { AssetSelect, FormShell, Segmented, SwapForm, useProposal } from "./forms";
 import { OtherHoldings } from "./wallet";
-import { ProposalCard } from "./proposal-card";
 import { GuardrailMeters, KillSwitch } from "./rail";
-import { Badge, Button, Card, CardHeader, cx, ErrorState, Field, Skeleton } from "./ui";
+import { Badge, Card, CardHeader, cx, ErrorState, Field, Skeleton } from "./ui";
 
 function PageHead({ title, body, aside }: { title: string; body: string; aside?: React.ReactNode }) {
   return (
@@ -44,35 +43,6 @@ export function VaultPage() {
         <CardHeader title="Risk" hint="Measured live against mainnet prices." action={<Link href="/guardrails" className="rounded text-sm text-ink underline-offset-4 hover:underline">Adjust</Link>} />
         <div className="px-5 pt-4 pb-5">{p ? <GuardrailMeters p={p} /> : <Skeleton className="h-20" />}</div>
       </Card>
-    </div>
-  );
-}
-
-export function AgentPage() {
-  const portfolio = useApi<PortfolioDTO>("/api/portfolio", 30_000);
-  const agent = useApi<ProposalDTO[]>("/api/proposals?source=agent", 30_000);
-  const p = portfolio.data;
-  const refresh = () => {
-    void portfolio.refresh();
-    void agent.refresh();
-  };
-  return (
-    <div className="mx-auto max-w-[880px] space-y-6">
-      <PageHead
-        title="Agent"
-        body="The strategy engine sizes trades inside your guardrails. In autonomous mode the agent places them on its own."
-        aside={<ModeBadge p={p} />}
-      />
-      {p && p.guardrails.mode === "copilot" && (
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-control border border-line-strong bg-well px-4 py-3 text-sm text-ink-2">
-          The agent only suggests in copilot mode.
-          <Link href="/guardrails" className="rounded text-ink underline underline-offset-4">
-            Switch to autonomous in guardrails
-          </Link>
-        </p>
-      )}
-      <StrategyCard onSettled={refresh} />
-      <AgentLog proposals={agent.data} loading={agent.loading} />
     </div>
   );
 }
@@ -173,46 +143,6 @@ function VaultCard({ p, onSettled }: { p: PortfolioDTO | null; onSettled: () => 
         ) : (
           <SwapForm wallet="vault" onSettled={onSettled} />
         )}
-      </div>
-    </Card>
-  );
-}
-
-function StrategyCard({ onSettled }: { onSettled: () => void }) {
-  const idea = useProposal(onSettled);
-  return (
-    <Card>
-      <CardHeader
-        title="Strategy engine"
-        hint="Compares the testnet book to the mainnet price and your target mix, then sizes a trade inside your caps."
-        action={
-          <Button size="sm" variant="secondary" icon="ri-radar-line" loading={idea.busy} onClick={() => idea.stage("propose_strategy_trades")}>
-            Find a trade
-          </Button>
-        }
-      />
-      <div className="space-y-3 px-5 pt-3 pb-5">
-        {idea.error && <p className="rounded-control bg-well px-3 py-2 text-sm text-ink-2">{idea.error}</p>}
-        {idea.card}
-      </div>
-    </Card>
-  );
-}
-
-function AgentLog({ proposals, loading }: { proposals: ProposalDTO[] | null; loading: boolean }) {
-  const [updated, setUpdated] = useState<Record<string, ProposalDTO>>({});
-  const items = (proposals ?? []).map((p) => updated[p.id] ?? p);
-  return (
-    <Card>
-      <CardHeader title="Autonomous agent" hint="Trades the agent took for you in autonomous mode, with the guardrail verdict for each." />
-      <div className="space-y-3 px-5 pt-3 pb-5">
-        {loading && <Skeleton className="h-20" />}
-        {!loading && items.length === 0 && (
-          <p className="text-sm text-muted">Nothing yet. Turn on autonomous mode in guardrails; the agent checks for trades every minute.</p>
-        )}
-        {items.slice(0, 5).map((p) => (
-          <ProposalCard nested key={p.id} proposal={p} onChange={(next) => setUpdated((all) => ({ ...all, [next.id]: next }))} />
-        ))}
       </div>
     </Card>
   );
