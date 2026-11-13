@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ChatCompletionTool } from "groq-sdk/resources/chat/completions";
 import { amountDigits, ASSET_CODES, ASSETS, BASE_ASSETS } from "../assets";
+import { agentStatus } from "../agent/status";
+import { suggestTrade } from "../agent/suggest";
 import { haltTrading } from "../guardrails";
 import { technicals } from "../indicators";
 import { getPortfolio } from "../portfolio";
@@ -34,6 +36,7 @@ const schemas = {
   propose_vault_transfer: z.object({ direction: z.enum(["fund", "withdraw"]), asset, amount: positive }),
   propose_cancel_orders: z.object({}),
   propose_strategy_trades: z.object({}),
+  get_agent_status: z.object({}),
   halt_trading: z.object({ reason: z.string().optional() }),
 };
 
@@ -78,7 +81,8 @@ export const toolDefinitions: ChatCompletionTool[] = [
     amount: { type: "number" },
   }, ["direction", "asset", "amount"]),
   fn("propose_cancel_orders", "Stage cancelling every open order in the vault.", {}),
-  fn("propose_strategy_trades", "Run MINT's strategy engine across every allowed market and stage the best trade idea it finds for the vault.", {}),
+  fn("propose_strategy_trades", "Run the agent's trading rules across every allowed market and stage the best trade they find for the vault. If nothing qualifies, returns what the agent is waiting for on each market.", {}),
+  fn("get_agent_status", "What the trading agent is doing with the vault right now: mode, whether it is running, open positions with profit and loss, stops and targets, its view of each market, and its most recent decisions with reasons. Use for 'what is the agent doing', 'why did it buy/sell', 'how is it performing'.", {}),
   fn("halt_trading", "Kill switch: immediately halt all vault trading and cancel open orders. Use when the user asks to stop.", {
     reason: { type: "string" },
   }),
@@ -273,22 +277,45 @@ export async function runTool(userId: string, name: string, rawArgs: string): Pr
         return { output: proposalResult(p), proposalId: p.id };
       }
       case "propose_strategy_trades": {
+        // The agent's own rulebook first; if it has nothing, a testnet-vs-mainnet price gap.
+        const suggestion = await suggestTrade(userId);
+        if (suggestion.proposal) {
+          const p = suggestion.proposal;
+          return { output: { ...proposalResult(p), rationale: p.rationale, risk: p.risk }, proposalId: p.id };
+        }
         const [markets, portfolio] = await Promise.all([allMarkets(), getPortfolio(userId)]);
-        const ideas = generateIdeas(markets, portfolio);
-        if (ideas.length === 0) return { output: { ideas: [], note: "No opportunity clears the thresholds right now." } };
-        const idea = ideas[0];
-        const params =
-          idea.kind === "swap" && "from" in idea.params
-            ? await quoteSwapProposal(userId, "vault", idea.params.from, idea.params.to, idea.params.amount)
-            : idea.params;
-        const p = await createProposal(
-          userId,
-          { kind: idea.kind, source: "chat", title: idea.title, params, rationale: idea.rationale, risk: idea.risk },
-          portfolio,
-        );
+        const idea = generateIdeas(markets, portfolio).find((i) => i.kind === "limit_order");
+        if (!idea) return { output: { ideas: [], note: "No trade qualifies right now.", what_the_agent_is_waiting_for: suggestion.notes } };
+        const p = await createProposal(userId, { kind: idea.kind, source: "chat", title: idea.title, params: idea.params, rationale: idea.rationale, risk: idea.risk }, portfolio);
+        return { output: { ...proposalResult(p), rationale: idea.rationale, risk: idea.risk, expected_return_pct: round(idea.expectedReturnPct, 2) }, proposalId: p.id };
+      }
+      case "get_agent_status": {
+        const a = await agentStatus(userId);
         return {
-          output: { ...proposalResult(p), rationale: idea.rationale, risk: idea.risk, expected_return_pct: round(idea.expectedReturnPct, 2), other_ideas: ideas.slice(1).map((i) => i.title) },
-          proposalId: p.id,
+          output: {
+            mode: a.mode,
+            halted: a.halted,
+            running: a.online,
+            last_check: a.lastTickAt,
+            checks_so_far: a.tickCount,
+            headline: a.headline,
+            open_positions: a.positions.map((p) => ({
+              asset: p.asset,
+              strategy: p.strategy,
+              value_usd: round(p.valueUsd, 2),
+              pnl_usd: round(p.pnlUsd, 2),
+              pnl_pct: round(p.pnlPct, 2),
+              entry: p.entryPrice,
+              stop: p.stopPrice,
+              target: p.targetPrice,
+            })),
+            realized_pnl_usd: round(a.stats.realizedUsd, 2),
+            unrealized_pnl_usd: round(a.stats.unrealizedUsd, 2),
+            closed_trades: a.stats.closedTrades,
+            win_rate_pct: a.stats.winRatePct === null ? null : round(a.stats.winRatePct, 0),
+            markets: a.reads.map((r) => ({ asset: r.asset, regime: r.regime, rsi: r.rsi === null ? null : round(r.rsi, 0), view: r.note })),
+            recent_decisions: a.decisions.slice(0, 12).map((d) => ({ at: d.createdAt, action: d.action, summary: d.summary })),
+          },
         };
       }
       case "halt_trading": {
