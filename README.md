@@ -8,6 +8,12 @@ USDC, and an AI that proposes trades a deterministic guardrail engine must appro
 is signed. Market analysis reads **real mainnet** XLM/USDC prices; every transaction settles on
 **testnet** and links to StellarChain.
 
+
+Link to Demo Video: https://drive.google.com/drive/folders/11Vvxwgv3xCTyudc8ZYFzSa6APuDPLQSU?usp=drive_link
+
+Link to App: https://mintapp-theta.vercel.app
+
+
 ## How it fits together
 
 | Piece | Where | What it does |
